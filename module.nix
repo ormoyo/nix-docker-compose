@@ -1,12 +1,22 @@
 { pkgs, config, lib, dockerPaths, ... }:
 let
+  inherit (builtins)
+    attrValues
+    concatLists
+    concatStringsSep
+    elemAt
+    isString
+    length
+    listToAttrs
+    map
+    mapAttrs
+    readDir;
   inherit (lib)
     attrByPath
-    attrsets
     concatMapAttrs
     filterAttrs
-    flatten
     foldl'
+    mapAttrs'
     mergeAttrs
     mkEnableOption
     mkIf
@@ -19,7 +29,10 @@ let
 
   cfg = config.services.docker;
 
-  sepIfNo0 = sep: list: if (builtins.length list) > 0 then sep + (builtins.concatStringsSep sep list) else "";
+  sepIfNo0 = sep: list: 
+    if (length list) > 0 
+    then sep + (concatStringsSep sep list) 
+    else "";
 
   sortFiles = path: sortFiles' path [ ];
   sortFiles' = path: dirs: concatMapAttrs
@@ -29,81 +42,80 @@ let
     )
     (builtins.readDir path);
 
-  dirFiles = foldl' mergeAttrs { } (builtins.map (dir: sortFiles dir) dockerPaths);
-  removeSignIfNoDup = name:
-    let
-      n = builtins.elemAt (splitString "$" name) 0;
-    in
-    if dirFiles ? ${n} then name else n;
+  modules = dockerPaths
+    |> map (path: sortFiles path)
+    |> foldl' (mergeAttrs) { }
+    |> filterAttrs (n: v: n != "default")
+    |> (modules: 
+      mapAttrs' (file: path:
+        let 
+          service = cfg.services.${name};
+          name = elemAt (splitString "$" file) 0;
+          uniqueName =
+            if modules ? ${name} 
+            then file
+            else name;
+        in nameValuePair uniqueName
+          <| import "${path}/${name}.nix" { 
+            name = service.serviceName;
+            id =
+              if isString service.user
+              then config.users.users.${service.user}.uid
+              else service.user;
+            path = service.dataDir;
+            getSecret = secret:
+              if secret == "TZ"
+              then config.sops.secrets."docker/TZ".path
+              else config.sops.secrets."docker/${uniqueName}/${secret}".path;
+            inherit pkgs config cfg lib;
+          }
+      ) modules);
 
-  step1 = filterAttrs (n: v: n != "default") dirFiles;
-  step2 = attrsets.mapAttrs' (file: path: nameValuePair (removeSignIfNoDup file) path) step1;
+  options = modules |>
+    mapAttrs
+    (name: module:
+      mkOption {
+        default = { };
+        type = types.submodule {
+          options = {
+            enable = mkOption {
+              type = types.bool;
+              default = true;
+            };
 
-  getUser = service: cfg.services.${service}.user;
-  import_file = path: name:
-    import "${path}/${name}.nix" {
-      name = cfg.services.${name}.serviceName;
-      id =
-        if builtins.isString (getUser name)
-        then config.users.users.${getUser name}.uid
-        else (getUser name);
-      cfg = cfg.services.${name};
-      path = cfg.services.${name}.dataDir;
-      getSecret = secret:
-        if secret == "TZ"
-        then config.sops.secrets."docker/TZ".path
-        else config.sops.secrets."docker/${name}/${secret}".path;
-      inherit pkgs;
-      inherit config;
-      inherit lib;
-    };
+            autoStart = mkOption {
+              type = types.bool;
+              default = true;
+            };
 
-  modules = builtins.mapAttrs (name: path: import_file path (builtins.elemAt (splitString "$" name) 0)) step2;
-  create_option = name: module:
-    mkOption {
-      default = { };
-      type = types.submodule {
-        options = {
-          enable = mkOption {
-            type = types.bool;
-            default = true;
-          };
+            serviceName = mkOption {
+              type = types.str;
+              default = name;
+            };
 
-          autoStart = mkOption {
-            type = types.bool;
-            default = false;
-          };
+            dataDir = mkOption {
+              type = types.str;
+              default = "${cfg.dataPath}/${name}";
+            };
 
-          serviceName = mkOption {
-            type = types.str;
-            default = name;
-          };
+            backups.exclude = mkOption {
+              type = types.listOf types.str;
+              default = [ ];
+            };
 
-          dataDir = mkOption {
-            type = types.str;
-            default = "${cfg.dataPath}/${name}";
-          };
+            user = mkOption {
+              type = with types; either str ints.unsigned;
+              default = cfg.user;
+            };
 
-          backups.exclude = mkOption {
-            type = types.listOf types.str;
-            default = [ ];
-          };
-
-          user = mkOption {
-            type = with types; either str ints.unsigned;
-            default = cfg.user;
-          };
-
-          extraPaths = mkOption {
-            type = types.attrsOf types.str;
-            default = { };
-          };
-        } //
-        (attrByPath [ "custom" "options" ] { } module);
-      };
-    };
-
-  options = builtins.mapAttrs (name: module: create_option name module) modules;
+            extraPaths = mkOption {
+              type = types.attrsOf types.str;
+              default = { };
+            };
+          } //
+          (attrByPath [ "custom" "options" ] { } module);
+        };
+      });
 in
 {
   options.services.docker = {
@@ -154,52 +166,53 @@ in
   config =
     let
       enabledModules = filterAttrs (name: value: cfg.services.${name}.enable) modules;
-      services = builtins.mapAttrs
+      services = mapAttrs
         (name: module: {
           serviceName = name;
           settings = filterAttrs (n: v: n != "custom") module;
         })
         enabledModules;
 
-      paths = flatten (builtins.attrValues
-        (builtins.mapAttrs
-          (n: v:
-            [ (cfg.services.${n}.dataDir) ]
-            ++ (builtins.attrValues cfg.services.${n}.extraPaths))
-          enabledModules));
+      paths = enabledModules
+        |> mapAttrs 
+            (n: v: [ (cfg.services.${n}.dataDir) ] 
+            ++ (attrValues cfg.services.${n}.extraPaths))
+        |> attrValues
+        |> concatLists;
 
-      exclusions = flatten (builtins.attrValues
-        (builtins.mapAttrs
-          (name: module:
+      exclusions = enabledModules
+        |> mapAttrs
+            (name: module:
             let
-              isBackupEnabled = attrByPath [ "custom" "backups" "enable" ] true module;
-              exclusions =
+              enabled = attrByPath [ "custom" "backups" "enable" ] true module;
+              exclusions = 
                 (attrByPath [ "custom" "backups" "exclude" ] [ ] module)
-                ++ optional (!isBackupEnabled) "**";
-            in
-            (cfg.services.${name}.backups.exclude ++ exclusions)
-          )
-          enabledModules));
+                ++ optional (!enabled) "**";
+            in 
+            (cfg.services.${name}.backups.exclude ++ exclusions))
+        |> attrValues
+        |> concatLists;
 
-      secrets = concatMapAttrs
-        (name: module:
-          builtins.listToAttrs (builtins.map
-            (secret: nameValuePair "docker/${name}/${secret}" {
-              owner = cfg.services.${name}.user;
-              restartUnits = [ "${name}.service" ];
-            })
-            (attrByPath [ "custom" "secrets" ] [ ] module))
-        )
-        enabledModules;
+      secrets = enabledModules
+        |> attrValues
+        |> map (mod: attrByPath [ "custom" "secrets" ] mod)
+        |> concatLists
+        |> map (secret: {
+          nameValuePair "docker/${name}/${secret}" {
+            owner = cfg.services.${name}.user;
+            restartUnits= [ "${name}.service" ];
+          }
+        })
+        |> listToAttrs;
 
       activations = concatMapAttrs
         (name: module:
-          attrsets.mapAttrs'
+          mapAttrs'
             (n: value: nameValuePair "docker-${name}-${n}" value)
             (attrByPath [ "custom" "activationScripts" ] { } module))
         enabledModules;
 
-      systemd = builtins.mapAttrs
+      systemd = mapAttrs
         (name: module: mkIf (!cfg.services.${name}.autoStart) {
           after = lib.mkForce [ ];
         })
