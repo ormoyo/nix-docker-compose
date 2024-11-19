@@ -194,15 +194,17 @@ in
         |> concatLists;
 
       secrets = enabledModules
+        |> mapAttrs (name: mod: 
+          attrByPath [ "custom" "secrets" ] [ ] mod 
+            |> map (secret:
+              nameValuePair "docker/${name}/${secret}" {
+                owner = cfg.services.${name}.user;
+                restartUnits= [ "${name}.service" ];
+              }
+            )
+          )
         |> attrValues
-        |> map (mod: attrByPath [ "custom" "secrets" ] mod)
         |> concatLists
-        |> map (secret: {
-          nameValuePair "docker/${name}/${secret}" {
-            owner = cfg.services.${name}.user;
-            restartUnits= [ "${name}.service" ];
-          }
-        })
         |> listToAttrs;
 
       activations = concatMapAttrs
