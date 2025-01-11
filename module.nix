@@ -217,6 +217,7 @@ in
       systemd = mapAttrs
         (name: module: mkIf (!cfg.services.${name}.autoStart) {
           after = lib.mkForce [ ];
+          wantedBy = lib.mkForce [ ];
         })
         enabledModules;
     in

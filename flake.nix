@@ -7,6 +7,7 @@
 
   outputs = { self, arion }: {
     nixosModules.nix-docker-compose = ({ pkgs, lib, config, dockerPaths, ... }: {
+      nix.settings.experimental-features = [ "pipe-operators" ]; 
       imports = [
         arion.nixosModules.arion
         ./module.nix
