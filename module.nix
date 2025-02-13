@@ -1,4 +1,4 @@
-{ pkgs, config, lib, dockerPaths, ... }:
+{ pkgs, config, lib, containerPaths, ... }:
 let
   inherit (builtins)
     attrValues
@@ -26,7 +26,7 @@ let
     splitString
     types;
 
-  cfg = config.services.docker;
+  cfg = config.services.containers;
 
   sepIfNo0 = sep: list: 
     if (length list) > 0 
@@ -41,7 +41,7 @@ let
     )
     (builtins.readDir path);
 
-  modules = dockerPaths
+  modules = containerPaths
     |> map (path: sortFiles path)
     |> foldl' (mergeAttrs) { }
     |> filterAttrs (n: v: n != "default")
@@ -64,8 +64,8 @@ let
             path = service.dataDir;
             getSecret = secret:
               if secret == "TZ"
-              then config.sops.secrets."docker/TZ".path
-              else config.sops.secrets."docker/${uniqueName}/${secret}".path;
+              then config.sops.secrets."containers/TZ".path
+              else config.sops.secrets."containers/${uniqueName}/${secret}".path;
             inherit pkgs config cfg lib;
           }
       ) modules);
@@ -117,8 +117,8 @@ let
       });
 in
 {
-  options.services.docker = rec {
-    enable = mkEnableOption "Ormoyo's docker module";
+  options.services.containers = {
+    enable = mkEnableOption "Ormoyo's docker compose module";
 
     backend = mkOption {
       type = types.enum [ "docker" "podman" ];
@@ -127,7 +127,7 @@ in
 
     dataPath = mkOption {
       type = types.str;
-      default = "/opt/${backend}";
+      default = "/opt/containers";
     };
 
     user = mkOption {
@@ -201,7 +201,7 @@ in
         |> mapAttrs (name: mod: 
           attrByPath [ "custom" "secrets" ] [ ] mod 
             |> map (secret:
-              nameValuePair "docker/${name}/${secret}" {
+              nameValuePair "containers/${name}/${secret}" {
                 owner = cfg.services.${name}.user;
                 restartUnits= [ "${name}.service" ];
               }
@@ -214,7 +214,7 @@ in
       activations = concatMapAttrs
         (name: module:
           mapAttrs'
-            (n: value: nameValuePair "docker-${name}-${n}" value)
+            (n: value: nameValuePair "containers-${name}-${n}" value)
             (attrByPath [ "custom" "activationScripts" ] { } module))
         enabledModules;
 
@@ -228,7 +228,7 @@ in
       #  users.extraUsers.ormoyo.extraGroups = [ "podman" ];
       services.backups = mkIf cfg.backups.enable {
         enable = true;
-        repos.docker = {
+        repos.containers = {
           paths = paths;
           time = cfg.backups.time;
           timePersistent = cfg.backups.timePersistent;
@@ -237,7 +237,7 @@ in
       };
 
       sops.secrets = secrets // {
-        "docker/TZ" = { mode = "0444"; };
+        "containers/TZ" = { mode = "0444"; };
       };
 
       system.activationScripts = activations;
