@@ -118,12 +118,17 @@ let
       });
 in
 {
-  options.services.docker = {
+  options.services.docker = rec {
     enable = mkEnableOption "Ormoyo's docker module";
+
+    backend = mkOption {
+      type = types.enum [ "docker" "podman" ];
+      default = "podman";
+    };
 
     dataPath = mkOption {
       type = types.str;
-      default = "/opt/docker";
+      default = "/opt/${backend}";
     };
 
     user = mkOption {
@@ -240,9 +245,9 @@ in
       systemd.services = systemd;
 
       virtualisation = {
-        docker.enable = true;
+        ${cfg.backend}.enable = true;
         arion = {
-          backend = "docker";
+          backend = if cfg.backend == "podman" then "podman-socket" else cfg.backend;
           projects = services;
         };
       };
