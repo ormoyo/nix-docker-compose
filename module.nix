@@ -9,8 +9,7 @@ let
     length
     listToAttrs
     map
-    mapAttrs
-    readDir;
+    mapAttrs;
   inherit (lib)
     attrByPath
     concatMapAttrs
