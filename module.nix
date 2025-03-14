@@ -246,7 +246,9 @@ in
       virtualisation = {
         ${cfg.backend}.enable = true;
         arion = {
-          backend = if cfg.backend == "podman" then "podman-socket" else cfg.backend;
+          backend = if cfg.backend == "podman" 
+                    then "podman-socket" 
+                    else cfg.backend;
           projects = services;
         };
       };
