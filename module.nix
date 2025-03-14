@@ -28,15 +28,15 @@ let
 
   cfg = config.services.containers;
 
-  sepIfNo0 = sep: list: 
+  separateDirs = sep: dirs: 
     if (length list) > 0 
-    then sep + (concatStringsSep sep list) 
+    then sep + (concatStringsSep sep dirs) 
     else "";
 
   sortFiles = path: sortFiles' path [ ];
   sortFiles' = path: dirs: concatMapAttrs
     (name: type:
-      if type != "directory" then { "${removeSuffix ".nix" name}${sepIfNo0 "$" dirs}" = path; }
+      if type != "directory" then { "${removeSuffix ".nix" name}${separateDirs "$" dirs}" = path; }
       else (sortFiles' "${path}/${name}" (dirs ++ [ name ]))
     )
     (builtins.readDir path);
