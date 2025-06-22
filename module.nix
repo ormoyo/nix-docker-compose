@@ -29,7 +29,7 @@ let
   cfg = config.services.containers;
 
   separateDirs = sep: dirs: 
-    if (length list) > 0 
+    if (length dirs) > 0 
     then sep + (concatStringsSep sep dirs) 
     else "";
 
